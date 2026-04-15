@@ -44,7 +44,7 @@ jobs:
       - name: Add upstream remote
         run: |
           git remote add upstream https://github.com/thedotmack/claude-mem.git 2>/dev/null || true
-          git fetch upstream main --depth=1
+          git fetch upstream main
 
       - name: Compute upstream diff for critical files
         id: diff
