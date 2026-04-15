@@ -1,0 +1,51 @@
+name: Ceemac Upstream PR Policy
+
+'on':
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  classify:
+    if: ${{ github.head_ref == 'ceemac/upstream-sync' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ceemac-upstream-guard.yml
+    with:
+      base_sha: ${{ github.event.pull_request.base.sha }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+
+  apply-policy:
+    if: ${{ github.head_ref == 'ceemac/upstream-sync' }}
+    needs: classify
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Apply protected-surface policy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ needs.classify.outputs.critical_changed }}" == "true" ]]; then
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label manual-review-required || true
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label safe-upstream-sync || true
+            comment_body="Protected customization files changed in this upstream sync. CI ran, but this PR requires manual review and will not auto-merge."
+          else
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label safe-upstream-sync || true
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label manual-review-required || true
+            comment_body="Protected customization files were not touched in this upstream sync. Required checks can gate auto-merge safely."
+            gh pr merge "$PR_NUMBER" --repo "$REPO" --auto --merge
+          fi
+
+          existing_comment_id="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments --jq '.comments[] | select(.author.login == "github-actions[bot]" and (.body | contains("Protected customization files"))) | .id' | tail -n 1)"
+          if [[ -n "$existing_comment_id" ]]; then
+            gh api repos/${REPO}/issues/comments/${existing_comment_id} -X PATCH -f body="$comment_body" >/dev/null
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$comment_body"
+          fi

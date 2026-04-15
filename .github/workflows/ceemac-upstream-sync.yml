@@ -1,0 +1,82 @@
+name: Ceemac Upstream Sync
+
+'on':
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */6 * * *'
+
+jobs:
+  sync-upstream:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/thedotmack/claude-mem.git 2>/dev/null || true
+          git fetch origin main
+          git fetch upstream main
+
+      - name: Check whether upstream advanced
+        id: compare
+        shell: bash
+        run: |
+          set -euo pipefail
+          origin_sha="$(git rev-parse origin/main)"
+          upstream_sha="$(git rev-parse upstream/main)"
+          echo "origin_sha=$origin_sha" >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=$upstream_sha" >> "$GITHUB_OUTPUT"
+
+          if git merge-base --is-ancestor "$upstream_sha" "$origin_sha"; then
+            echo "upstream_changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "upstream_changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Refresh sync branch
+        if: steps.compare.outputs.upstream_changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -B ceemac/upstream-sync origin/main
+          git merge --no-edit upstream/main
+          git push origin ceemac/upstream-sync --force-with-lease
+
+      - name: Create or update sync PR
+        if: steps.compare.outputs.upstream_changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr_number="$(gh pr list --repo "$GITHUB_REPOSITORY" --head ceemac/upstream-sync --base main --state open --json number --jq '.[0].number // empty')"
+          title="chore: sync upstream thedotmack/claude-mem"
+          body="$(cat <<'EOF'
+          ## Summary
+          - synchronize the latest commits from `thedotmack/claude-mem` into this fork
+          - route the PR through the protected-surface policy workflow before merge
+
+          ## Notes
+          - if protected files changed, this PR will stay open for manual review
+          - if protected files did not change and required checks pass, auto-merge will be enabled
+          EOF
+          )"
+
+          if [[ -n "$pr_number" ]]; then
+            gh pr edit "$pr_number" --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head ceemac/upstream-sync --title "$title" --body "$body"
+          fi
