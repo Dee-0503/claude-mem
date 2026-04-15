@@ -1,6 +1,18 @@
 name: Ceemac Upstream Guard
 
-on:
+'on':
+  workflow_call:
+    inputs:
+      base_sha:
+        required: false
+        type: string
+      head_sha:
+        required: false
+        type: string
+    outputs:
+      critical_changed:
+        description: Whether protected files changed in the evaluated diff
+        value: ${{ jobs.upstream-guard.outputs.critical_changed }}
   workflow_dispatch:
   push:
     branches:
@@ -10,9 +22,12 @@ on:
 
 jobs:
   upstream-guard:
+    if: ${{ github.event_name != 'pull_request' || github.head_ref != 'ceemac/upstream-sync' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      critical_changed: ${{ steps.diff.outputs.critical_changed }}
     env:
       CRITICAL_FILES: |
         src/supervisor/env-sanitizer.ts
@@ -49,15 +64,33 @@ jobs:
       - name: Compute upstream diff for critical files
         id: diff
         shell: bash
+        env:
+          INPUT_BASE_SHA: ${{ inputs.base_sha }}
+          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           mapfile -t critical_files < <(printf '%s\n' "$CRITICAL_FILES" | sed '/^$/d')
-          merge_base="$(git merge-base HEAD upstream/main)"
-          echo "merge_base=$merge_base" >> "$GITHUB_OUTPUT"
-          git diff --name-only "$merge_base"...HEAD -- "${critical_files[@]}" | tee critical-files-changed.txt
+
+          if [[ -n "$INPUT_BASE_SHA" && -n "$INPUT_HEAD_SHA" ]]; then
+            diff_base="$INPUT_BASE_SHA"
+            diff_head="$INPUT_HEAD_SHA"
+          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            diff_base="$PR_BASE_SHA"
+            diff_head="$PR_HEAD_SHA"
+          else
+            diff_base="$(git merge-base HEAD upstream/main)"
+            diff_head="HEAD"
+          fi
+
+          echo "diff_base=$diff_base" >> "$GITHUB_OUTPUT"
+          echo "diff_head=$diff_head" >> "$GITHUB_OUTPUT"
+
+          git diff --name-only "$diff_base...$diff_head" -- "${critical_files[@]}" | tee critical-files-changed.txt
           if [ -s critical-files-changed.txt ]; then
             echo "critical_changed=true" >> "$GITHUB_OUTPUT"
-            git diff --unified=3 "$merge_base"...HEAD -- "${critical_files[@]}" > critical-files.diff
+            git diff --unified=3 "$diff_base...$diff_head" -- "${critical_files[@]}" > critical-files.diff
           else
             echo "critical_changed=false" >> "$GITHUB_OUTPUT"
             : > critical-files.diff
