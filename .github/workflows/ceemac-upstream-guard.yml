@@ -32,7 +32,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '20'
-          cache: npm
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -45,15 +44,14 @@ jobs:
       - name: Add upstream remote
         run: |
           git remote add upstream https://github.com/thedotmack/claude-mem.git 2>/dev/null || true
-          git fetch upstream main --depth=1
+          git fetch upstream main
 
       - name: Compute upstream diff for critical files
         id: diff
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t critical_files < <(printf '%s
-' "$CRITICAL_FILES" | sed '/^$/d')
+          mapfile -t critical_files < <(printf '%s\n' "$CRITICAL_FILES" | sed '/^$/d')
           merge_base="$(git merge-base HEAD upstream/main)"
           echo "merge_base=$merge_base" >> "$GITHUB_OUTPUT"
           git diff --name-only "$merge_base"...HEAD -- "${critical_files[@]}" | tee critical-files-changed.txt
