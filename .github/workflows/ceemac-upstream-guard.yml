@@ -1,0 +1,84 @@
+name: Ceemac Upstream Guard
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - 'ceemac/**'
+  pull_request:
+
+jobs:
+  upstream-guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CRITICAL_FILES: |
+        src/supervisor/env-sanitizer.ts
+        src/shared/EnvManager.ts
+        src/services/infrastructure/ProcessManager.ts
+        src/services/worker/ProcessRegistry.ts
+        src/services/worker/SDKAgent.ts
+        src/services/worker/knowledge/KnowledgeAgent.ts
+        tests/supervisor/env-sanitizer.test.ts
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/thedotmack/claude-mem.git 2>/dev/null || true
+          git fetch upstream main --depth=1
+
+      - name: Compute upstream diff for critical files
+        id: diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t critical_files < <(printf '%s
+' "$CRITICAL_FILES" | sed '/^$/d')
+          merge_base="$(git merge-base HEAD upstream/main)"
+          echo "merge_base=$merge_base" >> "$GITHUB_OUTPUT"
+          git diff --name-only "$merge_base"...HEAD -- "${critical_files[@]}" | tee critical-files-changed.txt
+          if [ -s critical-files-changed.txt ]; then
+            echo "critical_changed=true" >> "$GITHUB_OUTPUT"
+            git diff --unified=3 "$merge_base"...HEAD -- "${critical_files[@]}" > critical-files.diff
+          else
+            echo "critical_changed=false" >> "$GITHUB_OUTPUT"
+            : > critical-files.diff
+          fi
+
+      - name: Run sanitizer regression test
+        run: bun test tests/supervisor/env-sanitizer.test.ts
+
+      - name: Run targeted agent tests when critical files changed
+        if: steps.diff.outputs.critical_changed == 'true'
+        run: |
+          bun test tests/supervisor/env-sanitizer.test.ts
+          bun test tests/sdk-agent-resume.test.ts
+
+      - name: Upload critical diff artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: critical-upstream-diff
+          path: |
+            critical-files-changed.txt
+            critical-files.diff

@@ -26,7 +26,7 @@ describe('sanitizeEnv', () => {
     expect(result.HOME).toBe('/home/user');
   });
 
-  it('strips exact-match variables (CLAUDECODE, CLAUDE_CODE_SESSION, CLAUDE_CODE_ENTRYPOINT, MCP_SESSION_ID)', () => {
+  it('strips exact-match variables (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT)', () => {
     const result = sanitizeEnv({
       CLAUDECODE: '1',
       CLAUDE_CODE_SESSION: 'session-123',
@@ -36,9 +36,9 @@ describe('sanitizeEnv', () => {
     });
 
     expect(result.CLAUDECODE).toBeUndefined();
-    expect(result.CLAUDE_CODE_SESSION).toBeUndefined();
+    expect(result.CLAUDE_CODE_SESSION).toBe('session-123');
     expect(result.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
-    expect(result.MCP_SESSION_ID).toBeUndefined();
+    expect(result.MCP_SESSION_ID).toBe('mcp-abc');
     expect(result.NODE_PATH).toBe('/usr/local/lib');
   });
 
@@ -97,7 +97,7 @@ describe('sanitizeEnv', () => {
     expect('UNDEFINED_KEY' in result).toBe(false);
   });
 
-  it('combines prefix and exact match removal in a single pass', () => {
+  it('combines prefix stripping with explicit preservation in a single pass', () => {
     const result = sanitizeEnv({
       PATH: '/usr/bin',
       CLAUDECODE: '1',
@@ -116,9 +116,9 @@ describe('sanitizeEnv', () => {
     expect(result.CLAUDECODE_FOO).toBeUndefined();
     expect(result.CLAUDE_CODE_BAR).toBeUndefined();
     expect(result.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-token');
-    expect(result.CLAUDE_CODE_SESSION).toBeUndefined();
+    expect(result.CLAUDE_CODE_SESSION).toBe('session');
     expect(result.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
-    expect(result.MCP_SESSION_ID).toBeUndefined();
+    expect(result.MCP_SESSION_ID).toBe('mcp');
   });
 
   it('preserves CLAUDE_CODE_GIT_BASH_PATH through sanitization', () => {
@@ -133,18 +133,22 @@ describe('sanitizeEnv', () => {
     expect(result.HOME).toBe('/home/user');
   });
 
-  it('selectively preserves only allowed CLAUDE_CODE_* vars while stripping others', () => {
+  it('preserves session-critical Claude vars while still stripping unrelated CLAUDE_CODE_* vars', () => {
     const result = sanitizeEnv({
       CLAUDE_CODE_OAUTH_TOKEN: 'my-oauth-token',
       CLAUDE_CODE_GIT_BASH_PATH: '/usr/bin/bash',
+      CLAUDE_CODE_SESSION: 'session-123',
+      MCP_SESSION_ID: 'mcp-456',
       CLAUDE_CODE_RANDOM_OTHER: 'should-be-stripped',
       CLAUDE_CODE_INTERNAL_FLAG: 'should-be-stripped',
       PATH: '/usr/bin'
     });
 
-    // Preserved: explicitly allowed CLAUDE_CODE_* vars
+    // Preserved: explicitly allowed vars required for auth/session continuity
     expect(result.CLAUDE_CODE_OAUTH_TOKEN).toBe('my-oauth-token');
     expect(result.CLAUDE_CODE_GIT_BASH_PATH).toBe('/usr/bin/bash');
+    expect(result.CLAUDE_CODE_SESSION).toBe('session-123');
+    expect(result.MCP_SESSION_ID).toBe('mcp-456');
 
     // Stripped: all other CLAUDE_CODE_* vars
     expect(result.CLAUDE_CODE_RANDOM_OTHER).toBeUndefined();
