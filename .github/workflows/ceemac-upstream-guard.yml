@@ -52,8 +52,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t critical_files < <(printf '%s
-' "$CRITICAL_FILES" | sed '/^$/d')
+          mapfile -t critical_files < <(printf '%s\n' "$CRITICAL_FILES" | sed '/^$/d')
           merge_base="$(git merge-base HEAD upstream/main)"
           echo "merge_base=$merge_base" >> "$GITHUB_OUTPUT"
           git diff --name-only "$merge_base"...HEAD -- "${critical_files[@]}" | tee critical-files-changed.txt
