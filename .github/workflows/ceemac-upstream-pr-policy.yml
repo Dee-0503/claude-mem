@@ -1,22 +1,33 @@
 name: Ceemac Upstream PR Policy
 
 'on':
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      base_sha:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
   pull_request:
     branches:
       - main
 
 jobs:
   classify:
-    if: ${{ github.head_ref == 'ceemac/upstream-sync' }}
+    if: ${{ github.head_ref == 'ceemac/upstream-sync' || github.event_name == 'workflow_dispatch' }}
     permissions:
       contents: read
     uses: ./.github/workflows/ceemac-upstream-guard.yml
     with:
-      base_sha: ${{ github.event.pull_request.base.sha }}
-      head_sha: ${{ github.event.pull_request.head.sha }}
+      base_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+      head_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}
 
   apply-policy:
-    if: ${{ github.head_ref == 'ceemac/upstream-sync' }}
+    if: ${{ github.head_ref == 'ceemac/upstream-sync' || github.event_name == 'workflow_dispatch' }}
     needs: classify
     runs-on: ubuntu-latest
     permissions:
@@ -24,7 +35,7 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number }}
       REPO: ${{ github.repository }}
     steps:
       - name: Apply protected-surface policy
