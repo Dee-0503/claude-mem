@@ -25,9 +25,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      statuses: write
     outputs:
       critical_changed: ${{ steps.diff.outputs.critical_changed }}
     env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CRITICAL_FILES: |
         src/supervisor/env-sanitizer.ts
         src/shared/EnvManager.ts
@@ -37,6 +39,16 @@ jobs:
         src/services/worker/knowledge/KnowledgeAgent.ts
         tests/supervisor/env-sanitizer.test.ts
     steps:
+      - name: Mark upstream guard pending
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA} \
+            -f state='pending' \
+            -f context='upstream-guard' \
+            -f description='Running upstream guard' \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" >/dev/null
+
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
@@ -112,3 +124,25 @@ jobs:
           path: |
             critical-files-changed.txt
             critical-files.diff
+
+      - name: Mark upstream guard success
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA} \
+            -f state='success' \
+            -f context='upstream-guard' \
+            -f description='Upstream guard passed' \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" >/dev/null
+
+      - name: Mark upstream guard failure
+        if: ${{ failure() || cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA} \
+            -f state='failure' \
+            -f context='upstream-guard' \
+            -f description='Upstream guard failed' \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" >/dev/null
