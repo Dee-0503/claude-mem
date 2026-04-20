@@ -16,6 +16,7 @@ import { PendingMessageStore } from '../sqlite/PendingMessageStore.js';
 import { SessionQueueProcessor } from '../queue/SessionQueueProcessor.js';
 import { getProcessBySession, ensureProcessExit } from './ProcessRegistry.js';
 import { getSupervisor } from '../../supervisor/index.js';
+import { MAX_CONSECUTIVE_SUMMARY_FAILURES } from '../../sdk/prompts.js';
 
 /** Idle threshold before a stuck generator (zombie subprocess) is force-killed. */
 export const MAX_GENERATOR_IDLE_MS = 5 * 60 * 1000; // 5 minutes
@@ -68,7 +69,13 @@ export function detectStaleGenerator(
   if (proc && proc.exitCode === null) {
     try {
       proc.kill('SIGKILL');
-    } catch {}
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.warn('SESSION', 'Failed to SIGKILL stale generator subprocess', {}, error);
+      } else {
+        logger.warn('SESSION', 'Failed to SIGKILL stale generator subprocess with non-Error', {}, new Error(String(error)));
+      }
+    }
   }
   // Signal the SDK agent loop to exit
   session.abortController.abort();
@@ -219,7 +226,10 @@ export class SessionManager {
       currentProvider: null,  // Will be set when generator starts
       consecutiveRestarts: 0,  // Track consecutive restart attempts to prevent infinite loops
       processingMessageIds: [],  // CLAIM-CONFIRM: Track message IDs for confirmProcessed()
-      lastGeneratorActivity: Date.now()  // Initialize for stale detection (Issue #1099)
+      lastGeneratorActivity: Date.now(),  // Initialize for stale detection (Issue #1099)
+      consecutiveSummaryFailures: 0,  // Circuit breaker for summary retry loop (#1633)
+      pendingAgentId: null,   // Subagent identity carried from the most recent claimed message
+      pendingAgentType: null  // (null for main-session messages)
     };
 
     logger.debug('SESSION', 'Creating new session object (memorySessionId cleared to prevent stale resume)', {
@@ -275,7 +285,9 @@ export class SessionManager {
       tool_input: data.tool_input,
       tool_response: data.tool_response,
       prompt_number: data.prompt_number,
-      cwd: data.cwd
+      cwd: data.cwd,
+      agentId: data.agentId,
+      agentType: data.agentType
     };
 
     try {
@@ -286,10 +298,17 @@ export class SessionManager {
         sessionId: sessionDbId
       });
     } catch (error) {
-      logger.error('SESSION', 'Failed to persist observation to DB', {
-        sessionId: sessionDbId,
-        tool: data.tool_name
-      }, error);
+      if (error instanceof Error) {
+        logger.error('SESSION', 'Failed to persist observation to DB', {
+          sessionId: sessionDbId,
+          tool: data.tool_name
+        }, error);
+      } else {
+        logger.error('SESSION', 'Failed to persist observation to DB with non-Error', {
+          sessionId: sessionDbId,
+          tool: data.tool_name
+        }, new Error(String(error)));
+      }
       throw error; // Don't continue if we can't persist
     }
 
@@ -312,6 +331,18 @@ export class SessionManager {
       session = this.initializeSession(sessionDbId);
     }
 
+    // Circuit breaker: skip summarize if too many consecutive failures (#1633).
+    // This prevents the infinite loop where each failed summary spawns a new session
+    // with an ever-growing prompt. Counter is in-memory per ActiveSession — it resets
+    // on worker restart, which is acceptable because session state is already ephemeral.
+    if (session.consecutiveSummaryFailures >= MAX_CONSECUTIVE_SUMMARY_FAILURES) {
+      logger.warn('SESSION', `Circuit breaker OPEN: skipping summarize after ${session.consecutiveSummaryFailures} consecutive failures (#1633)`, {
+        sessionId: sessionDbId,
+        contentSessionId: session.contentSessionId
+      });
+      return;
+    }
+
     // CRITICAL: Persist to database FIRST
     const message: PendingMessage = {
       type: 'summarize',
@@ -325,9 +356,15 @@ export class SessionManager {
         sessionId: sessionDbId
       });
     } catch (error) {
-      logger.error('SESSION', 'Failed to persist summarize to DB', {
-        sessionId: sessionDbId
-      }, error);
+      if (error instanceof Error) {
+        logger.error('SESSION', 'Failed to persist summarize to DB', {
+          sessionId: sessionDbId
+        }, error);
+      } else {
+        logger.error('SESSION', 'Failed to persist summarize to DB with non-Error', {
+          sessionId: sessionDbId
+        }, new Error(String(error)));
+      }
       throw error; // Don't continue if we can't persist
     }
 
@@ -379,9 +416,15 @@ export class SessionManager {
     try {
       await getSupervisor().getRegistry().reapSession(sessionDbId);
     } catch (error) {
-      logger.warn('SESSION', 'Supervisor reapSession failed (non-blocking)', {
-        sessionId: sessionDbId
-      }, error as Error);
+      if (error instanceof Error) {
+        logger.warn('SESSION', 'Supervisor reapSession failed (non-blocking)', {
+          sessionId: sessionDbId
+        }, error);
+      } else {
+        logger.warn('SESSION', 'Supervisor reapSession failed (non-blocking) with non-Error', {
+          sessionId: sessionDbId
+        }, new Error(String(error)));
+      }
     }
 
     // 4. Cleanup
@@ -451,7 +494,11 @@ export class SessionManager {
             try {
               trackedProcess.process.kill('SIGKILL');
             } catch (err) {
-              logger.warn('SESSION', 'Failed to SIGKILL subprocess for stale generator', { sessionDbId }, err as Error);
+              if (err instanceof Error) {
+                logger.warn('SESSION', 'Failed to SIGKILL subprocess for stale generator', { sessionDbId }, err);
+              } else {
+                logger.warn('SESSION', 'Failed to SIGKILL subprocess for stale generator with non-Error', { sessionDbId }, new Error(String(err)));
+              }
             }
           }
           // Signal the SDK agent loop to exit after the subprocess dies

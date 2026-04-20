@@ -26,6 +26,20 @@ const MAX_WAIT_FOR_SUMMARY_MS = 110_000; // 110s — fits within Stop hook's 120
 
 export const summarizeHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
+    // Skip summaries in subagent context — subagents do not own the session summary.
+    // Gate on agentId only: that field is present exclusively for Task-spawned subagents.
+    // agentType alone (no agentId) indicates `--agent`-started main sessions, which still
+    // own their summary. Do this BEFORE ensureWorkerRunning() so a subagent Stop hook
+    // does not bootstrap the worker.
+    if (input.agentId) {
+      logger.debug('HOOK', 'Skipping summary: subagent context detected', {
+        sessionId: input.sessionId,
+        agentId: input.agentId,
+        agentType: input.agentType
+      });
+      return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
+    }
+
     // Ensure worker is running before any other logic
     const workerReady = await ensureWorkerRunning();
     if (!workerReady) {
@@ -94,32 +108,36 @@ export const summarizeHandler: EventHandler = {
     let summaryStored: boolean | null = null;
     while ((Date.now() - waitStart) < MAX_WAIT_FOR_SUMMARY_MS) {
       await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+
+      let statusResponse: Response;
+      let status: { queueLength?: number; summaryStored?: boolean | null };
       try {
-        const statusResponse = await workerHttpRequest(`/api/sessions/status?contentSessionId=${encodeURIComponent(sessionId)}`, {
-          timeoutMs: 5000
-        });
-        const status = await statusResponse.json() as { queueLength?: number; summaryStored?: boolean | null };
-        const queueLength = status.queueLength ?? 0;
-        // Only treat an empty queue as completion when the session exists (non-404).
-        // A 404 means the session was not found — not that processing finished.
-        if (queueLength === 0 && statusResponse.status !== 404) {
-          summaryStored = status.summaryStored ?? null;
-          logger.info('HOOK', 'Summary processing complete', {
-            waitedMs: Date.now() - waitStart,
-            summaryStored
-          });
-          // Warn when the agent processed a summarize request but produced no storable summary.
-          // This is the silent-failure path described in #1633: queue empties but no summary record exists.
-          if (summaryStored === false) {
-            logger.warn('HOOK', 'Summary was not stored: LLM response likely lacked valid <summary> tags (#1633)', {
-              sessionId,
-              waitedMs: Date.now() - waitStart
-            });
-          }
-          break;
-        }
-      } catch {
+        statusResponse = await workerHttpRequest(`/api/sessions/status?contentSessionId=${encodeURIComponent(sessionId)}`, { timeoutMs: 5000 });
+        status = await statusResponse.json() as { queueLength?: number; summaryStored?: boolean | null };
+      } catch (pollError) {
         // Worker may be busy — keep polling
+        logger.debug('HOOK', 'Summary status poll failed, retrying', { error: pollError instanceof Error ? pollError.message : String(pollError) });
+        continue;
+      }
+
+      const queueLength = status.queueLength ?? 0;
+      // Only treat an empty queue as completion when the session exists (non-404).
+      // A 404 means the session was not found — not that processing finished.
+      if (queueLength === 0 && statusResponse.status !== 404) {
+        summaryStored = status.summaryStored ?? null;
+        logger.info('HOOK', 'Summary processing complete', {
+          waitedMs: Date.now() - waitStart,
+          summaryStored
+        });
+        // Warn when the agent processed a summarize request but produced no storable summary.
+        // This is the silent-failure path described in #1633: queue empties but no summary record exists.
+        if (summaryStored === false) {
+          logger.warn('HOOK', 'Summary was not stored: LLM response likely lacked valid <summary> tags (#1633)', {
+            sessionId,
+            waitedMs: Date.now() - waitStart
+          });
+        }
+        break;
       }
     }
 
