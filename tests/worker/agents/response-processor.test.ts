@@ -215,9 +215,25 @@ describe('ResponseProcessor', () => {
   });
 
   describe('non-XML observer responses', () => {
-    it('warns when the observer returns prose that will be discarded', async () => {
-      const session = createMockSession();
+    it('marks pending messages failed and skips storage when the observer returns prose', async () => {
+      const markFailed = mock(() => {});
+      const session = createMockSession({
+        processingMessageIds: [11, 12],
+      });
       const responseText = 'Skipping — repeated log scan with no new findings.';
+
+      mockSessionManager = {
+        getMessageIterator: async function* () {
+          yield* [];
+        },
+        getPendingMessageStore: () => ({
+          markFailed,
+          markProcessed: mock(() => {}),
+          confirmProcessed: mock(() => {}),
+          cleanupProcessed: mock(() => 0),
+          resetStuckMessages: mock(() => 0),
+        }),
+      } as unknown as SessionManager;
 
       await processAgentResponse(
         responseText,
@@ -232,15 +248,17 @@ describe('ResponseProcessor', () => {
 
       expect(logger.warn).toHaveBeenCalledWith(
         'PARSER',
-        'TestAgent returned non-XML response; observation content was discarded',
+        'TestAgent returned non-XML response; marking messages as failed for retry (#1874)',
         expect.objectContaining({
           sessionId: 1,
           preview: responseText
         })
       );
-      const [, , observations, summary] = mockStoreObservations.mock.calls[0];
-      expect(observations).toHaveLength(0);
-      expect(summary).toBeNull();
+      expect(markFailed).toHaveBeenCalledTimes(2);
+      expect(markFailed).toHaveBeenNthCalledWith(1, 11);
+      expect(markFailed).toHaveBeenNthCalledWith(2, 12);
+      expect(mockStoreObservations).not.toHaveBeenCalled();
+      expect(session.processingMessageIds).toEqual([]);
     });
   });
 
@@ -508,20 +526,25 @@ describe('ResponseProcessor', () => {
       expect(summary).toBeNull();
     });
 
-    it('should handle response with only text (no XML)', async () => {
-      const session = createMockSession();
+    it('should handle response with only text (no XML) by failing the batch for retry', async () => {
+      const markFailed = mock(() => {});
+      const session = createMockSession({
+        processingMessageIds: [21],
+      });
       const responseText = 'This is just plain text without any XML tags.';
 
-      mockStoreObservations = mock(() => ({
-        observationIds: [],
-        summaryId: null,
-        createdAtEpoch: 1700000000000,
-      }));
-      (mockDbManager.getSessionStore as any) = () => ({
-        storeObservations: mockStoreObservations,
-        ensureMemorySessionIdRegistered: mock(() => {}),
-        getSessionById: mock(() => ({ memory_session_id: 'memory-session-456' })),
-      });
+      mockSessionManager = {
+        getMessageIterator: async function* () {
+          yield* [];
+        },
+        getPendingMessageStore: () => ({
+          markFailed,
+          markProcessed: mock(() => {}),
+          confirmProcessed: mock(() => {}),
+          cleanupProcessed: mock(() => 0),
+          resetStuckMessages: mock(() => 0),
+        }),
+      } as unknown as SessionManager;
 
       await processAgentResponse(
         responseText,
@@ -534,9 +557,10 @@ describe('ResponseProcessor', () => {
         'TestAgent'
       );
 
-      expect(mockStoreObservations).toHaveBeenCalledTimes(1);
-      const [, , observations] = mockStoreObservations.mock.calls[0];
-      expect(observations).toHaveLength(0);
+      expect(markFailed).toHaveBeenCalledTimes(1);
+      expect(markFailed).toHaveBeenCalledWith(21);
+      expect(mockStoreObservations).not.toHaveBeenCalled();
+      expect(session.processingMessageIds).toEqual([]);
     });
   });
 
@@ -764,22 +788,38 @@ describe('ResponseProcessor', () => {
       expect(session.consecutiveSummaryFailures).toBe(0);
     });
 
-    it('increments the counter when a summary was expected but none was stored', async () => {
+    it('does NOT increment the counter when a summary was expected but the batch is marked failed for retry', async () => {
+      const markFailed = mock(() => {});
       mockStoreObservations.mockImplementation(() => ({
         observationIds: [],
         summaryId: null,
         createdAtEpoch: 1700000000000,
       } as StorageResult));
 
+      mockSessionManager = {
+        getMessageIterator: async function* () {
+          yield* [];
+        },
+        getPendingMessageStore: () => ({
+          markFailed,
+          markProcessed: mock(() => {}),
+          confirmProcessed: mock(() => {}),
+          cleanupProcessed: mock(() => 0),
+          resetStuckMessages: mock(() => 0),
+        }),
+      } as unknown as SessionManager;
+
       const session = createMockSession({
+        processingMessageIds: [31],
         conversationHistory: [{ role: 'user', content: SUMMARY_PROMPT }],
       });
-      // LLM returned nothing structured — no summary stored
       const badResponse = 'I cannot comply with that request.';
 
       await processAgentResponse(badResponse, session, mockDbManager, mockSessionManager, mockWorker, 0, null, 'TestAgent');
 
-      expect(session.consecutiveSummaryFailures).toBe(1);
+      expect(markFailed).toHaveBeenCalledWith(31);
+      expect(mockStoreObservations).not.toHaveBeenCalled();
+      expect(session.consecutiveSummaryFailures).toBe(0);
     });
 
     it('does NOT increment the counter on intentional <skip_summary/> responses', async () => {
