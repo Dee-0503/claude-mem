@@ -14,6 +14,7 @@ dist/
 .claude/skills/
 .claude/plans/
 .claude/worktrees/
+.worktrees/
 plugin/data/
 plugin/data.backup/
 package-lock.json
