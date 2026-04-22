@@ -63,6 +63,23 @@ Based on active daily development usage:
 | SQLite | ~0.8 MB | ~24 MB | ~5 KB per observation |
 | Chroma | ~4 MB | ~120 MB | ~50 KB per observation (embeddings) |
 
+## CI non-green email reminder
+
+This repository can send an email when an open PR targeting `main` reaches a terminal non-green CI state and requires manual merge inspection.
+
+Required secrets:
+
+- `CI_ALERT_EMAIL`
+- `RESEND_API_KEY`
+- `RESEND_FROM`
+
+Behavior:
+
+- sends one reminder per PR head SHA
+- creates a PR comment marker after successful send
+- new commits can trigger new reminders
+- fully green PRs do not send email
+
 ## Common Issues and Solutions
 
 ### Summarize error loop

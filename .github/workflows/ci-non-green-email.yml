@@ -1,0 +1,107 @@
+name: CI Non-Green Email Reminder
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  workflow_run:
+    workflows:
+      - Ceemac Upstream Guard
+      - Ceemac Upstream PR Policy
+      - Claude Code Review
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to evaluate
+        required: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: read
+      statuses: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Evaluate PR CI state
+        id: evaluate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_PR_NUMBER: ${{ github.event.inputs.pr_number }}
+        run: node scripts/ci-non-green-email.mjs
+
+      - name: Send CI reminder email
+        if: steps.evaluate.outputs.should_notify == 'true'
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM: ${{ secrets.RESEND_FROM }}
+          CI_ALERT_EMAIL: ${{ secrets.CI_ALERT_EMAIL }}
+          EMAIL_SUBJECT: ${{ steps.evaluate.outputs.subject }}
+          EMAIL_BODY: ${{ steps.evaluate.outputs.body }}
+        run: |
+          node <<'EOF'
+          const response = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              from: process.env.RESEND_FROM,
+              to: [process.env.CI_ALERT_EMAIL],
+              subject: process.env.EMAIL_SUBJECT,
+              text: process.env.EMAIL_BODY
+            })
+          });
+
+          if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`Resend API failed: ${response.status} ${body}`);
+          }
+          EOF
+
+      - name: Persist notification marker
+        if: steps.evaluate.outputs.should_notify == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.evaluate.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.evaluate.outputs.head_sha }}
+        run: |
+          node <<'EOF'
+          const repo = process.env.GITHUB_REPOSITORY;
+          const prNumber = process.env.PR_NUMBER;
+          const sha = process.env.HEAD_SHA;
+          const response = await fetch(
+            `https://api.github.com/repos/${repo}/issues/${prNumber}/comments`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+                Accept: 'application/vnd.github+json',
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                body: `CI reminder marker: pr=${prNumber} sha=${sha}`
+              })
+            }
+          );
+          if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`Marker POST failed: ${response.status} ${body}`);
+          }
+          EOF
