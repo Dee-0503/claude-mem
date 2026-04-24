@@ -49,11 +49,21 @@ jobs:
 
       - name: Refresh sync branch
         if: steps.compare.outputs.upstream_changed == 'true'
+        id: merge
         shell: bash
         run: |
           set -euo pipefail
           git checkout -B ceemac/upstream-sync origin/main
-          git merge --no-edit upstream/main
+
+          if git merge --no-edit upstream/main; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            # Abort the failed merge so the branch is in a clean state
+            git merge --abort
+            # Push the branch as-is (same as origin/main) so the PR can be created
+          fi
+
           git push origin ceemac/upstream-sync --force-with-lease
 
       - name: Create or update sync PR
@@ -61,13 +71,42 @@ jobs:
         id: pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HAS_CONFLICT: ${{ steps.merge.outputs.conflict }}
         shell: bash
         run: |
           set -euo pipefail
           pr_number="$(gh pr list --repo "$GITHUB_REPOSITORY" --head ceemac/upstream-sync --base main --state open --json number --jq '.[0].number // empty')"
           head_sha="$(git rev-parse ceemac/upstream-sync)"
-          title="chore: sync upstream thedotmack/claude-mem"
-          body="$(cat <<'EOF'
+
+          if [[ "$HAS_CONFLICT" == "true" ]]; then
+            # List conflicting files for the PR body
+            conflict_files="$(git merge --no-commit upstream/main 2>&1 | grep 'CONFLICT' | sed 's/CONFLICT.*: /- /' || true)"
+            git merge --abort 2>/dev/null || true
+
+            title="⚠️ sync upstream: merge conflicts need manual resolution"
+            body="$(cat <<EOF
+          ## Summary
+          - upstream \`thedotmack/claude-mem\` has new commits but automatic merge failed due to conflicts
+          - **manual resolution required** — merge conflicts must be resolved locally
+
+          ## Conflicting files
+          ${conflict_files}
+
+          ## How to resolve
+          \`\`\`bash
+          cd your-claude-mem-repo
+          git fetch upstream main
+          git checkout -B upstream-merge origin/main
+          git merge upstream/main
+          # resolve conflicts
+          git push origin upstream-merge
+          # create PR from upstream-merge → main
+          \`\`\`
+          EOF
+            )"
+          else
+            title="chore: sync upstream thedotmack/claude-mem"
+            body="$(cat <<'EOF'
           ## Summary
           - synchronize the latest commits from `thedotmack/claude-mem` into this fork
           - route the PR through the protected-surface policy workflow before merge
@@ -76,7 +115,8 @@ jobs:
           - if protected files changed, this PR will stay open for manual review
           - if protected files did not change and required checks pass, auto-merge will be enabled
           EOF
-          )"
+            )"
+          fi
 
           if [[ -n "$pr_number" ]]; then
             gh pr edit "$pr_number" --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
@@ -89,7 +129,7 @@ jobs:
           echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
 
       - name: Dispatch upstream guard
-        if: steps.compare.outputs.upstream_changed == 'true'
+        if: steps.compare.outputs.upstream_changed == 'true' && steps.merge.outputs.conflict != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -98,7 +138,7 @@ jobs:
           gh workflow run ceemac-upstream-guard.yml --repo "$GITHUB_REPOSITORY" --ref ceemac/upstream-sync
 
       - name: Dispatch upstream PR policy
-        if: steps.compare.outputs.upstream_changed == 'true'
+        if: steps.compare.outputs.upstream_changed == 'true' && steps.merge.outputs.conflict != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
