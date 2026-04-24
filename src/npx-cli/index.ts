@@ -55,6 +55,13 @@ ${pc.bold('Runtime Commands')} (requires Bun, delegates to installed plugin):
   ${pc.cyan('npx claude-mem adopt [--dry-run] [--branch <name>]')}    Stamp merged worktrees into parent project
   ${pc.cyan('npx claude-mem transcript watch')}     Start transcript watcher
 
+${pc.bold('Maintenance Commands')} (macOS only):
+  ${pc.cyan('npx claude-mem maintenance status')}        Show launchd agent status
+  ${pc.cyan('npx claude-mem maintenance install')}       Install launchd agents
+  ${pc.cyan('npx claude-mem maintenance uninstall')}     Remove launchd agents
+  ${pc.cyan('npx claude-mem maintenance health-check')}  Run health check once
+  ${pc.cyan('npx claude-mem maintenance scheduled')}     Run scheduled maintenance once
+
 ${pc.bold('IDE Identifiers')}:
   claude-code, cursor, gemini-cli, opencode, openclaw,
   windsurf, codex-cli, copilot-cli, antigravity, goose,
@@ -164,6 +171,13 @@ async function main(): Promise<void> {
         console.error(`Usage: npx claude-mem transcript watch`);
         process.exit(1);
       }
+      break;
+    }
+
+    // -- Maintenance -------------------------------------------------------
+    case 'maintenance': {
+      const { runMaintenanceCommand } = await import('./commands/maintenance.js');
+      await runMaintenanceCommand(args[1]?.toLowerCase());
       break;
     }
 
