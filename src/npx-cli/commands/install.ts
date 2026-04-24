@@ -11,6 +11,7 @@ import * as p from '@clack/prompts';
 import pc from 'picocolors';
 import { execSync } from 'child_process';
 import { cpSync, existsSync, readFileSync, rmSync } from 'fs';
+import { homedir } from 'os';
 import { join } from 'path';
 
 // Non-TTY detection: @clack/prompts crashes with ENOENT in non-TTY environments
@@ -514,6 +515,27 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
           return runSmartInstall()
             ? `Runtime dependencies ready ${pc.green('OK')}`
             : `Runtime setup may need attention ${pc.yellow('!')}`;
+        },
+      },
+      {
+        title: 'Registering maintenance agents',
+        task: async (message) => {
+          if (process.platform !== 'darwin') {
+            return `Maintenance agents skipped (macOS only) ${pc.dim('—')}`;
+          }
+          message('Installing launchd agents...');
+          try {
+            const { installLaunchd } = await import('../../services/maintenance/LaunchdInstaller.js');
+            const { loadMaintenancePolicy } = await import('../../services/maintenance/MaintenancePolicy.js');
+            const policy = loadMaintenancePolicy(join(homedir(), '.claude-mem', 'settings.json'));
+            const result = installLaunchd(policy.dailyRestartHour, policy.dailyRestartMinute);
+            if (result.scheduled && result.healthCheck) {
+              return `Maintenance agents registered ${pc.green('OK')}`;
+            }
+            return `Maintenance agents partially registered ${pc.yellow('!')}`;
+          } catch {
+            return `Maintenance agents skipped ${pc.yellow('!')}`;
+          }
         },
       },
     ]);

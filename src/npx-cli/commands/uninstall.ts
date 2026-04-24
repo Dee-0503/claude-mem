@@ -195,6 +195,12 @@ export async function runUninstallCommand(): Promise<void> {
       const { uninstallCodexCli } = await import('../../services/integrations/CodexCliInstaller.js');
       return uninstallCodexCli();
     }},
+    { label: 'Maintenance agents', fn: async () => {
+      if (process.platform !== 'darwin') return 0;
+      const { uninstallLaunchd } = await import('../../services/maintenance/LaunchdInstaller.js');
+      const result = uninstallLaunchd();
+      return (result.scheduled || result.healthCheck) ? 1 : 0;
+    }},
   ];
 
   for (const { label, fn } of ideCleanups) {
