@@ -125,6 +125,27 @@
 
 ---
 
+## This Fork (@cee0503/claude-mem)
+
+This is an enhanced fork of [thedotmack/claude-mem](https://github.com/thedotmack/claude-mem) with additional features:
+
+- **Maintenance automation** — built-in macOS launchd agents for daily worker restart and hourly health checks with auto-recovery
+- **CI email alerts** — automatic Resend email notifications when PR CI checks fail
+- **Upstream auto-sync** — GitHub Actions workflow that syncs upstream changes every 6 hours with conflict-aware PR creation
+- **npm distribution** — published as `@cee0503/claude-mem` for one-command installation
+
+### Install
+
+```bash
+npx @cee0503/claude-mem install
+```
+
+This single command handles everything: plugin files, Claude Code registration, launchd maintenance agents, and autoUpdate configuration.
+
+For detailed setup and migration instructions, see [docs/mac-setup-guide.md](docs/mac-setup-guide.md).
+
+---
+
 ## Quick Start
 
 Install with a single command:
