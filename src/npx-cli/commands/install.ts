@@ -68,7 +68,7 @@ function registerMarketplace(): void {
   knownMarketplaces['thedotmack'] = {
     source: {
       source: 'github',
-      repo: 'thedotmack/claude-mem',
+      repo: 'Dee-0503/claude-mem',
     },
     installLocation: marketplaceDirectory(),
     lastUpdated: new Date().toISOString(),
