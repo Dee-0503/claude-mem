@@ -1,16 +1,16 @@
 {
-  "name": "thedotmack",
+  "name": "cee0503",
   "owner": {
-    "name": "Alex Newman"
+    "name": "Cee"
   },
   "metadata": {
-    "description": "Plugins by Alex Newman (thedotmack)",
-    "homepage": "https://github.com/thedotmack/claude-mem"
+    "description": "Claude-mem fork by Cee — persistent memory with maintenance automation",
+    "homepage": "https://github.com/Dee-0503/claude-mem"
   },
   "plugins": [
     {
       "name": "claude-mem",
-      "version": "12.3.2",
+      "version": "12.4.1",
       "source": "./plugin",
       "description": "Persistent memory system for Claude Code - context compression across sessions"
     }
