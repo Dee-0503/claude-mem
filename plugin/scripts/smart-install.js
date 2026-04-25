@@ -9,7 +9,7 @@
  * for both cache and marketplace installs), falling back to script location
  * and legacy paths.
  */
-import { existsSync, readFileSync, writeFileSync, openSync, readSync, closeSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, openSync, readSync, closeSync, readdirSync } from 'fs';
 import { execSync, spawnSync } from 'child_process';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
@@ -31,6 +31,52 @@ function isPluginDisabledInClaudeSettings() {
 if (isPluginDisabledInClaudeSettings()) {
   process.exit(0);
 }
+
+/**
+ * Ensure node/bun/uv are in PATH even when hooks.json PATH setup fails.
+ * The upstream Setup hook assumes nvm, but users may use fnm, volta, mise, etc.
+ * This repairs PATH before any tool checks run.
+ */
+function ensurePATH() {
+  const home = homedir();
+  const pathDirs = [
+    // Node version managers
+    join(home, '.nvm', 'versions', 'node'),  // nvm (upstream default)
+    join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin'),  // fnm
+    join(home, '.volta', 'bin'),  // volta
+    join(home, '.local', 'share', 'mise', 'shims'),  // mise
+    // Tool-specific
+    join(home, '.bun', 'bin'),  // bun
+    join(home, '.local', 'bin'),  // uv, pipx
+    join(home, '.cargo', 'bin'),  // cargo/uv alternate
+    // System
+    '/usr/local/bin',
+    '/opt/homebrew/bin',
+  ];
+
+  const currentPath = process.env.PATH || '';
+  const additions = pathDirs.filter(d => existsSync(d) && !currentPath.includes(d));
+  if (additions.length > 0) {
+    process.env.PATH = additions.join(':') + ':' + currentPath;
+  }
+
+  // Special handling for nvm: resolve actual version directory
+  const nvmDir = join(home, '.nvm', 'versions', 'node');
+  if (existsSync(nvmDir)) {
+    try {
+      const versions = readdirSync(nvmDir).filter(v => v.startsWith('v')).sort();
+      if (versions.length > 0) {
+        const latest = join(nvmDir, versions[versions.length - 1], 'bin');
+        if (existsSync(latest) && !process.env.PATH.includes(latest)) {
+          process.env.PATH = latest + ':' + process.env.PATH;
+        }
+      }
+    } catch { /* nvm dir exists but can't read */ }
+  }
+}
+
+ensurePATH();
+
 const IS_WINDOWS = process.platform === 'win32';
 
 /**
