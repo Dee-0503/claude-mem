@@ -10,6 +10,8 @@ const rootDir = path.resolve(__dirname, '..');
 const packageJsonPath = path.join(rootDir, 'package.json');
 const codexPluginPath = path.join(rootDir, '.codex-plugin', 'plugin.json');
 const claudePluginPath = path.join(rootDir, '.claude-plugin', 'plugin.json');
+const pluginPluginPath = path.join(rootDir, 'plugin', '.claude-plugin', 'plugin.json');
+const marketplacePath = path.join(rootDir, '.claude-plugin', 'marketplace.json');
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -88,6 +90,21 @@ function main() {
 
   writeJson(codexPluginPath, syncCodexPlugin(codexPlugin, pkg));
   writeJson(claudePluginPath, syncClaudePlugin(claudePlugin, pkg));
+
+  // Sync plugin/.claude-plugin/plugin.json (installed plugin manifest)
+  if (fs.existsSync(pluginPluginPath)) {
+    const pluginPlugin = readJson(pluginPluginPath);
+    writeJson(pluginPluginPath, syncClaudePlugin(pluginPlugin, pkg));
+  }
+
+  // Sync .claude-plugin/marketplace.json version
+  if (fs.existsSync(marketplacePath)) {
+    const marketplace = readJson(marketplacePath);
+    if (marketplace.plugins && marketplace.plugins[0]) {
+      marketplace.plugins[0].version = pkg.version;
+    }
+    writeJson(marketplacePath, marketplace);
+  }
 
   console.log('✓ Synced plugin manifests from package.json');
 }
