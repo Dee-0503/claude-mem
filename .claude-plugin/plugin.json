@@ -1,11 +1,11 @@
 {
-  "name": "claude-mem",
-  "version": "12.3.2",
+  "name": "@cee0503/claude-mem",
+  "version": "12.4.4",
   "description": "Memory compression system for Claude Code - persist context across sessions",
   "author": {
-    "name": "Alex Newman"
+    "name": "Cee"
   },
-  "repository": "https://github.com/thedotmack/claude-mem",
+  "repository": "https://github.com/Dee-0503/claude-mem",
   "license": "AGPL-3.0",
   "keywords": [
     "claude",
@@ -20,5 +20,5 @@
     "typescript",
     "nodejs"
   ],
-  "homepage": "https://github.com/thedotmack/claude-mem#readme"
+  "homepage": "https://github.com/Dee-0503/claude-mem#readme"
 }
